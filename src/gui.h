@@ -6,3 +6,10 @@
 #define GUI_H
 
 #endif //GUI_H
+
+int windowwidth = 800;
+int windowheight = 600;
+
+
+
+

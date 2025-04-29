@@ -3,3 +3,5 @@
 //
 
 #include "crypto.h"
+#include <openssl/ssl.h>
+#include <openssl/evp.h>
