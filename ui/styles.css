@@ -1,4 +1,16 @@
-.window{
-    background-color: #121212;
-    
+
+
+#show-button{
+    background: #4f4f4f;
+    color: white;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-weight: bold;
+}
+#main-window {
+    background-color: #1e1e1e;
+}
+
+#main-box {
+    background-color: transparent;
 }
