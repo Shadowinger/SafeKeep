@@ -25,9 +25,10 @@ int main(int argc, char **argv);
 static void login(GtkApplication    *app,  gpointer user_data);
 static void main_login(GtkButton *main_pass_button, gpointer user_data);
 static void activate(GtkApplication *app, gpointer user_data);
-static void on_show_button_clicked(GtkApplication *app,  gpointer user_data);
+static void on_show_button_clicked(GtkButton *button, gpointer user_data);
+static void on_add_entry_clicked(GtkButton *button, gpointer user_data);
 
-
+static void decrypt_and_show_entry(const char *encoded_text, GtkWidget *label);
 
 
 
@@ -46,8 +47,10 @@ static void login(GtkApplication *app,  gpointer user_data){
 
     GtkWidget *login_window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(login_window), "Password Manager");
-    gtk_window_set_default_size(GTK_WINDOW(login_window), 600, 400);
+    gtk_window_set_default_size(GTK_WINDOW(login_window), 300, 150);
     gtk_widget_set_name(login_window, "login-window");
+        gtk_window_set_resizable(GTK_WINDOW(login_window), FALSE);
+
 
     GtkWidget *login_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_window_set_child(GTK_WINDOW(login_window), login_vbox);
@@ -137,20 +140,49 @@ static void on_add_entry_clicked(GtkButton *button, gpointer user_data) {
     // Create new widgets for the grid
     GtkWidget *label_service = gtk_label_new(service_copy);
     gtk_widget_set_name(label_service, "label");
+    gtk_widget_set_halign(label_service, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(label_service, 10);
+    gtk_widget_set_margin_end(label_service, 10);
+    gtk_widget_set_margin_top(label_service, 5);
+    gtk_widget_set_margin_bottom(label_service, 5);
+    gtk_widget_set_hexpand(label_service, TRUE);
+    gtk_widget_set_valign(label_service, GTK_ALIGN_CENTER);
+    gtk_grid_attach(GTK_GRID(grid), label_service, 0, row_counter, 1, 1);
+    decrypt_and_show_entry(service_copy, label_service);
+
+    // Apply the same margins to email and password labels
     GtkWidget *label_email = gtk_label_new(email_copy);
     gtk_widget_set_name(label_email, "email");
-    GtkWidget *label_password = gtk_label_new(password_copy);
+    gtk_widget_set_halign(label_email, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(label_email, 10);
+    gtk_widget_set_margin_end(label_email, 10);
+    gtk_widget_set_margin_top(label_email, 5);
+    gtk_widget_set_margin_bottom(label_email, 5);
+    gtk_widget_set_hexpand(label_email, TRUE);
+    gtk_widget_set_valign(label_email, GTK_ALIGN_CENTER);
+    gtk_grid_attach(GTK_GRID(grid), label_email, 1, row_counter, 1, 1);
+    decrypt_and_show_entry(email_copy, label_email);
+
+    GtkWidget *label_password = gtk_label_new("********");
+    gtk_widget_set_halign(label_password, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(label_password, 10);
+    gtk_widget_set_margin_end(label_password, 10);
+    gtk_widget_set_margin_top(label_password, 5);
+    gtk_widget_set_margin_bottom(label_password, 5);
+    gtk_widget_set_hexpand(label_password, TRUE);
+    gtk_widget_set_valign(label_password, GTK_ALIGN_CENTER);
+    gtk_grid_attach(GTK_GRID(grid), label_password, 2, row_counter, 1, 1);
+    
     GtkWidget *show_button = gtk_button_new_with_label("Zobrazit");
     gtk_widget_set_name(show_button, "show-button");
-
-    // Connect button to callback with password data
-    g_object_set_data_full(G_OBJECT(show_button), "password", password_copy, g_free);
-    // g_signal_connect(show_button, "clicked", G_CALLBACK(on_show_password_clicked), NULL);
-
-    // Add to grid
-    gtk_grid_attach(GTK_GRID(grid), label_service, 0, row_counter, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), label_email, 1, row_counter, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), label_password, 2, row_counter, 1, 1);
+    gtk_widget_set_margin_start(show_button, 5);
+    gtk_widget_set_margin_end(show_button, 10);
+    gtk_widget_set_margin_top(show_button, 2);
+    gtk_widget_set_margin_bottom(show_button, 2);
+    gtk_widget_set_halign(show_button, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(show_button, GTK_ALIGN_CENTER);
+    g_object_set_data(G_OBJECT(show_button), "password", password_copy);
+    g_signal_connect(show_button, "clicked", G_CALLBACK(on_show_button_clicked), NULL);
     gtk_grid_attach(GTK_GRID(grid), show_button, 3, row_counter, 1, 1);
 
     FILE *file = fopen("data/passwords.dat", "a");
@@ -234,7 +266,9 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     GtkWidget *window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Password Manager");
-    gtk_window_set_default_size(GTK_WINDOW(window), 600, 400);
+    gtk_window_set_default_size(GTK_WINDOW(window), 800, 600);
+    gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
+
     gtk_widget_set_name(window, "main-window");
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
@@ -265,8 +299,12 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     // Grid na položky
     grid = gtk_grid_new();
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 20);
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 20);  // Space between columns
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);     // Space between rows
+    gtk_widget_set_margin_start(grid, 20);            // Left margin
+    gtk_widget_set_margin_end(grid, 20);              // Right margin
+    gtk_widget_set_margin_top(grid, 20);              // Top margin
+    gtk_widget_set_margin_bottom(grid, 20);           // Bottom margin
     gtk_widget_set_hexpand(grid, TRUE);
     gtk_widget_set_vexpand(grid, TRUE);
 
@@ -280,10 +318,118 @@ static void activate(GtkApplication *app, gpointer user_data) {
     // Přidání scrolled_window místo přímo gridu
     gtk_box_append(GTK_BOX(vbox), scrolled_window);
 
+    // Load existing entries
+    FILE *file = fopen("data/passwords.dat", "r");
+    if (file) {
+        char service_line[1024];
+        char email_line[1024];
+        char password_line[1024];
+
+        while (fgets(service_line, sizeof(service_line), file) &&
+               fgets(email_line, sizeof(email_line), file) &&
+               fgets(password_line, sizeof(password_line), file)) {
+
+            service_line[strcspn(service_line, "\n")] = 0;
+            email_line[strcspn(email_line, "\n")] = 0;
+            password_line[strcspn(password_line, "\n")] = 0;
+
+            GtkWidget *label_service = gtk_label_new("");
+            gtk_widget_set_name(label_service, "label");
+            gtk_widget_set_halign(label_service, GTK_ALIGN_START);
+            gtk_widget_set_margin_start(label_service, 10);
+            gtk_widget_set_margin_end(label_service, 10);
+            gtk_widget_set_margin_top(label_service, 5);
+            gtk_widget_set_margin_bottom(label_service, 5);
+            gtk_widget_set_hexpand(label_service, TRUE);
+            gtk_widget_set_valign(label_service, GTK_ALIGN_CENTER);
+            gtk_grid_attach(GTK_GRID(grid), label_service, 0, row_counter, 1, 1);
+            decrypt_and_show_entry(service_line, label_service);
+
+            GtkWidget *label_email = gtk_label_new("");
+            gtk_widget_set_name(label_email, "email");
+            gtk_widget_set_halign(label_email, GTK_ALIGN_START);
+            gtk_widget_set_margin_start(label_email, 10);
+            gtk_widget_set_margin_end(label_email, 10);
+            gtk_widget_set_margin_top(label_email, 5);
+            gtk_widget_set_margin_bottom(label_email, 5);
+            gtk_widget_set_hexpand(label_email, TRUE);
+            gtk_widget_set_valign(label_email, GTK_ALIGN_CENTER);
+            gtk_grid_attach(GTK_GRID(grid), label_email, 1, row_counter, 1, 1);
+            decrypt_and_show_entry(email_line, label_email);
+
+            GtkWidget *label_password = gtk_label_new("********");
+            gtk_widget_set_halign(label_password, GTK_ALIGN_START);
+            gtk_widget_set_margin_start(label_password, 10);
+            gtk_widget_set_margin_end(label_password, 10);
+            gtk_widget_set_margin_top(label_password, 5);
+            gtk_widget_set_margin_bottom(label_password, 5);
+            gtk_widget_set_hexpand(label_password, TRUE);
+            gtk_widget_set_valign(label_password, GTK_ALIGN_CENTER);
+            gtk_grid_attach(GTK_GRID(grid), label_password, 2, row_counter, 1, 1);
+
+            GtkWidget *show_button = gtk_button_new_with_label("Zobrazit");
+            gtk_widget_set_name(show_button, "show-button");
+            gtk_widget_set_margin_start(show_button, 5);
+            gtk_widget_set_margin_end(show_button, 10);
+            gtk_widget_set_margin_top(show_button, 2);
+            gtk_widget_set_margin_bottom(show_button, 2);
+            gtk_widget_set_halign(show_button, GTK_ALIGN_CENTER);
+            gtk_widget_set_valign(show_button, GTK_ALIGN_CENTER);
+            g_object_set_data(G_OBJECT(show_button), "row", GINT_TO_POINTER(row_counter));
+            g_object_set_data_full(G_OBJECT(show_button), "encrypted_password", g_strdup(password_line), g_free);
+            g_signal_connect(show_button, "clicked", G_CALLBACK(on_show_button_clicked), NULL);
+            gtk_grid_attach(GTK_GRID(grid), show_button, 3, row_counter, 1, 1);
+
+            row_counter++;
+        }
+        fclose(file);
+    }
+
     gtk_widget_show(window);
 }
-static void on_show_button_clicked(GtkApplication *app,  gpointer user_data);
 
+static void decrypt_and_show_entry(const char *encoded_text, GtkWidget *label) {
+    unsigned char key[32] = "01234567890123456789012345678901";
+    unsigned char iv[16] = "0123456789012345";
+    
+    unsigned char decoded[512];
+    unsigned char decrypted[512] = {0};
+    int len, plaintext_len;
+    
+    // Base64 decode
+    EVP_ENCODE_CTX *decode_ctx = EVP_ENCODE_CTX_new();
+    EVP_DecodeInit(decode_ctx);
+    int decoded_len = 0;
+    EVP_DecodeUpdate(decode_ctx, decoded, &decoded_len, (unsigned char *)encoded_text, strlen(encoded_text));
+    int final_len;
+    EVP_DecodeFinal(decode_ctx, decoded + decoded_len, &final_len);
+    decoded_len += final_len;
+    EVP_ENCODE_CTX_free(decode_ctx);
+    
+    // Decrypt
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv);
+    EVP_DecryptUpdate(ctx, decrypted, &len, decoded, decoded_len);
+    plaintext_len = len;
+    EVP_DecryptFinal_ex(ctx, decrypted + len, &len);
+    plaintext_len += len;
+    EVP_CIPHER_CTX_free(ctx);
+    
+    decrypted[plaintext_len] = '\0';
+    gtk_label_set_text(GTK_LABEL(label), (char *)decrypted);
+}
+
+static void on_show_button_clicked(GtkButton *button, gpointer user_data) {
+    const char *encrypted_password = g_object_get_data(G_OBJECT(button), "encrypted_password");
+    int row = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "row"));
+    
+    if (encrypted_password) {
+        GtkWidget *label = gtk_grid_get_child_at(GTK_GRID(grid), 2, row);
+        if (label) {
+            decrypt_and_show_entry(encrypted_password, label);
+        }
+    }
+}
 
 int main(int argc, char **argv) {
     gtk_init();
