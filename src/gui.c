@@ -6,6 +6,8 @@
 #include "storage.h"
 #include <gtk/gtk.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <stdio.h>
 
 // Global variables - must match the extern declarations in the header
 GtkWidget *grid;
@@ -49,20 +51,60 @@ void main_login(GtkButton *main_pass_button, gpointer user_data) {
     GtkApplication *app = GTK_APPLICATION(g_application_get_default());
     const char *main_text = gtk_editable_get_text(GTK_EDITABLE(entries->main_pass));
 
-    // load the stored password from file
-    FILE *file = fopen("data/main-pass.dat", "r");
-    if (!file) {
-        g_warning("Nelze otevřít soubor password.dat");
+    const char *folder = ".safekeep";
+    const char *file = "main-pass.dat";
+    char dir_path[512];
+    char file_path[512];
+
+    // Get home directory
+    const char *home = getenv("HOME");
+    if (!home) home = getenv("USERPROFILE");
+    if (!home) {
+        g_warning("Cannot determine home directory.");
         return;
     }
 
-    char stored_pass[256];
-    if (!fgets(stored_pass, sizeof(stored_pass), file)) {
-        g_warning("Nepodařilo se přečíst heslo ze souboru");
-        fclose(file);
+    // Build directory and file paths
+    snprintf(dir_path, sizeof(dir_path), "%s/%s", home, folder);
+    snprintf(file_path, sizeof(file_path), "%s/%s", dir_path, file);
+
+    // Create hidden directory if it doesn't exist
+    struct stat st = {0};
+    if (stat(dir_path, &st) == -1) {
+        #ifdef _WIN32
+        mkdir(dir_path);
+        #else
+        mkdir(dir_path, 0700);
+        #endif
+    }
+
+    // Try to open the password file
+    FILE *filep = fopen(file_path, "r");
+    if (!filep) {
+        // File does not exist, create it and save the entered password
+        filep = fopen(file_path, "w");
+        if (!filep) {
+            g_warning("Cannot create password file.");
+            return;
+        }
+        fprintf(filep, "%s\n", main_text);
+        fclose(filep);
+        #ifndef _WIN32
+        chmod(file_path, 0600);
+        #endif
+        g_message("Master password set.");
+        // Optionally continue to main window here
         return;
     }
-    fclose(file);
+
+    // File exists, continue with reading password as before
+    char stored_pass[256];
+    if (!fgets(stored_pass, sizeof(stored_pass), filep)) {
+        g_warning("Nepodařilo se přečíst heslo ze souboru");
+        fclose(filep);
+        return;
+    }
+    fclose(filep);
 
     // eliminate newline character
     stored_pass[strcspn(stored_pass, "\n")] = '\0';
