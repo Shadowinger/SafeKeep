@@ -1,16 +1,22 @@
 
 
 #show-button{
-    background: #4f4f4f;
-    color: white;
+    color: black;
     border-radius: 25px;
     padding: 6px 12px;
     font-weight: bold;
 
 }
-#main-window {
-}
-#login-window{
-    background-color: #424040;
+
+#copy-button{
+    color: black;
+    border-radius: 25px;
+    padding: 6px 12px;
+    font-weight: bold;
 
 }
+
+
+
+
+

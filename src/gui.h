@@ -20,6 +20,8 @@ void main_login(GtkButton *main_pass_button, gpointer user_data);
 void activate(GtkApplication *app, gpointer user_data);
 void on_show_button_clicked(GtkButton *button, gpointer user_data);
 void on_add_entry_clicked(GtkButton *button, gpointer user_data);
+void on_copy_button_clicked(GtkButton *button, gpointer user_data);
+void on_delete_button_clicked(GtkButton *button, gpointer user_data);
 
 // Global variables needed across files
 extern GtkWidget *grid;

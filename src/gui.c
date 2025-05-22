@@ -8,6 +8,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <stdio.h>
+#include <openssl/ssl.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/err.h>
 
 // Global variables - must match the extern declarations in the header
 GtkWidget *grid;
@@ -185,6 +189,7 @@ void activate(GtkApplication *app, gpointer user_data) {
 
     // added scrolled window to the main vbox
     gtk_box_append(GTK_BOX(vbox), scrolled_window);
+    
 
     // Load existing entries
     load_entries_from_file();
@@ -238,4 +243,60 @@ void on_add_entry_clicked(GtkButton *button, gpointer user_data) {
     gtk_editable_set_text(GTK_EDITABLE(entries->entry_service), "");
     gtk_editable_set_text(GTK_EDITABLE(entries->entry_email), "");
     gtk_editable_set_text(GTK_EDITABLE(entries->entry_password), "");
+}
+
+void on_copy_button_clicked(GtkButton *button, gpointer user_data) {
+    const char *encrypted_password = g_object_get_data(G_OBJECT(button), "encrypted_password");
+    
+    if (encrypted_password) {
+        // Decrypt the password without showing it
+        unsigned char decoded[512];
+        unsigned char decrypted[512] = {0};
+        int len, plaintext_len;
+        
+        // Base64 decode
+        EVP_ENCODE_CTX *decode_ctx = EVP_ENCODE_CTX_new();
+        EVP_DecodeInit(decode_ctx);
+        int decoded_len = 0;
+        EVP_DecodeUpdate(decode_ctx, decoded, &decoded_len, (unsigned char *)encrypted_password, strlen(encrypted_password));
+        int final_len;
+        EVP_DecodeFinal(decode_ctx, decoded + decoded_len, &final_len);
+        decoded_len += final_len;
+        EVP_ENCODE_CTX_free(decode_ctx);
+        
+        // Decrypt using the same key/iv as in crypto.c
+        unsigned char key[32] = "01234567890123456789012345678901"; // 32 bytes
+        unsigned char iv[16] = "0123456789012345"; // 16 bytes
+        
+        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+        EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv);
+        EVP_DecryptUpdate(ctx, decrypted, &len, decoded, decoded_len);
+        plaintext_len = len;
+        EVP_DecryptFinal_ex(ctx, decrypted + len, &len);
+        plaintext_len += len;
+        EVP_CIPHER_CTX_free(ctx);
+        
+        decrypted[plaintext_len] = '\0';
+        
+        // Copy to clipboard using GTK4 clipboard API
+        GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+        gdk_clipboard_set_text(clipboard, (char *)decrypted);
+        
+        GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(button));
+        if (GTK_IS_WINDOW(root)) {
+            GtkWidget *message_dialog = gtk_message_dialog_new(
+                GTK_WINDOW(root),
+                GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                GTK_MESSAGE_INFO,
+                GTK_BUTTONS_OK,
+                "Password copied to clipboard"
+            );
+            g_signal_connect(message_dialog, "response", G_CALLBACK(gtk_window_destroy), NULL);
+            gtk_window_present(GTK_WINDOW(message_dialog));
+        }
+    }
+}
+void on_delete_button_clicked(GtkButton *button , gpointer user_data){
+    
+
 }

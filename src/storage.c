@@ -18,7 +18,7 @@ void add_new_entry(const char *service_text, const char *email_text, const char 
     char encoded_service[1024];
     char encoded_email[1024];
     char encoded_password[1024];
-    int len, ciphertext_len;
+    int ciphertext_len;
 
     // Encrypt and encode password first 
     encrypt_data(password_text, encrypted_password, encoded_password, &ciphertext_len);
@@ -62,7 +62,7 @@ void add_new_entry(const char *service_text, const char *email_text, const char 
     gtk_widget_set_valign(label_password, GTK_ALIGN_CENTER);
     gtk_grid_attach(GTK_GRID(grid), label_password, 2, row_counter, 1, 1);
     
-    GtkWidget *show_button = gtk_button_new_with_label("Zobrazit");
+    GtkWidget *show_button = gtk_button_new_with_label("Show");
     gtk_widget_set_name(show_button, "show-button");
     gtk_widget_set_margin_start(show_button, 5);
     gtk_widget_set_margin_end(show_button, 10);
@@ -74,6 +74,24 @@ void add_new_entry(const char *service_text, const char *email_text, const char 
     g_object_set_data_full(G_OBJECT(show_button), "encrypted_password", g_strdup(encoded_password), g_free);
     g_signal_connect(show_button, "clicked", G_CALLBACK(on_show_button_clicked), NULL);
     gtk_grid_attach(GTK_GRID(grid), show_button, 3, row_counter, 1, 1);
+
+    GtkWidget *copy_button = gtk_button_new_with_label("Copy");
+    gtk_widget_set_name(copy_button, "copy-button");
+    gtk_widget_set_margin_start(copy_button, 5);
+    gtk_widget_set_margin_end(copy_button, 10);
+    gtk_widget_set_margin_top(copy_button, 2);
+    gtk_widget_set_margin_bottom(copy_button, 2);
+    gtk_widget_set_halign(copy_button, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(copy_button, GTK_ALIGN_CENTER);
+    g_object_set_data(G_OBJECT(copy_button), "row", GINT_TO_POINTER(row_counter));
+    g_object_set_data_full(G_OBJECT(copy_button), "encrypted_password", g_strdup(encoded_password), g_free);
+    g_signal_connect(copy_button, "clicked", G_CALLBACK(on_copy_button_clicked), NULL);
+    gtk_grid_attach(GTK_GRID(grid), copy_button, 4, row_counter, 1, 1);
+
+
+
+
+
 
     FILE *file = fopen("data/passwords.dat", "a");
     if (!file) {
@@ -120,7 +138,7 @@ void load_entries_from_file() {
             password_line[strcspn(password_line, "\n")] = 0;
 
             GtkWidget *label_service = gtk_label_new("");
-            gtk_widget_set_name(label_service, "label");
+            gtk_widget_set_name(label_service, "label-service");
             gtk_widget_set_halign(label_service, GTK_ALIGN_START);
             gtk_widget_set_margin_start(label_service, 10);
             gtk_widget_set_margin_end(label_service, 10);
@@ -132,7 +150,7 @@ void load_entries_from_file() {
             decrypt_and_show_entry(service_line, label_service);
 
             GtkWidget *label_email = gtk_label_new("");
-            gtk_widget_set_name(label_email, "email");
+            gtk_widget_set_name(label_email, "label-email");
             gtk_widget_set_halign(label_email, GTK_ALIGN_START);
             gtk_widget_set_margin_start(label_email, 10);
             gtk_widget_set_margin_end(label_email, 10);
@@ -145,6 +163,7 @@ void load_entries_from_file() {
 
             GtkWidget *label_password = gtk_label_new("********");
             gtk_widget_set_halign(label_password, GTK_ALIGN_START);
+            gtk_widget_set_name(label_password, "label-password");
             gtk_widget_set_margin_start(label_password, 10);
             gtk_widget_set_margin_end(label_password, 10);
             gtk_widget_set_margin_top(label_password, 5);
@@ -153,7 +172,7 @@ void load_entries_from_file() {
             gtk_widget_set_valign(label_password, GTK_ALIGN_CENTER);
             gtk_grid_attach(GTK_GRID(grid), label_password, 2, row_counter, 1, 1);
 
-            GtkWidget *show_button = gtk_button_new_with_label("Zobrazit");
+            GtkWidget *show_button = gtk_button_new_with_label("Show");
             gtk_widget_set_name(show_button, "show-button");
             gtk_widget_set_margin_start(show_button, 5);
             gtk_widget_set_margin_end(show_button, 10);
@@ -165,6 +184,19 @@ void load_entries_from_file() {
             g_object_set_data_full(G_OBJECT(show_button), "encrypted_password", g_strdup(password_line), g_free);
             g_signal_connect(show_button, "clicked", G_CALLBACK(on_show_button_clicked), NULL);
             gtk_grid_attach(GTK_GRID(grid), show_button, 3, row_counter, 1, 1);
+
+            GtkWidget *copy_button = gtk_button_new_with_label("Copy");
+            gtk_widget_set_name(copy_button, "copy-button");
+            gtk_widget_set_margin_start(copy_button, 5);
+            gtk_widget_set_margin_end(copy_button, 10);
+            gtk_widget_set_margin_top(copy_button, 2);
+            gtk_widget_set_margin_bottom(copy_button, 2);
+            gtk_widget_set_halign(copy_button, GTK_ALIGN_CENTER);
+            gtk_widget_set_valign(copy_button, GTK_ALIGN_CENTER);
+            g_object_set_data(G_OBJECT(copy_button), "row", GINT_TO_POINTER(row_counter));
+            g_signal_connect(copy_button, "clicked", G_CALLBACK(on_copy_button_clicked), NULL);
+            g_object_set_data_full(G_OBJECT(copy_button), "encrypted_password", g_strdup(password_line), g_free);
+            gtk_grid_attach(GTK_GRID(grid), copy_button, 4, row_counter, 1, 1); 
 
             row_counter++;
         }
