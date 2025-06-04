@@ -97,30 +97,33 @@ void main_login(GtkButton *main_pass_button, gpointer user_data) {
         chmod(file_path, 0600);
         #endif
         g_message("Master password set.");
-        // Optionally continue to main window here
+        // Proceed to main window
+        GtkWidget *button = GTK_WIDGET(main_pass_button);
+        GtkWidget *login_window = gtk_widget_get_ancestor(button, GTK_TYPE_WINDOW);
+        if (login_window) {
+            activate(app, entries);
+            gtk_window_close(GTK_WINDOW(login_window));
+        }
         return;
     }
 
-    // File exists, continue with reading password as before
+    // File exists, check password
     char stored_pass[256];
     if (!fgets(stored_pass, sizeof(stored_pass), filep)) {
-        g_warning("Nepodařilo se přečíst heslo ze souboru");
+        g_warning("Failed to read password from file.");
         fclose(filep);
         return;
     }
     fclose(filep);
 
-    // eliminate newline character
     stored_pass[strcspn(stored_pass, "\n")] = '\0';
 
     if (strcmp(main_text, stored_pass) == 0) {
         GtkWidget *button = GTK_WIDGET(main_pass_button);
         GtkWidget *login_window = gtk_widget_get_ancestor(button, GTK_TYPE_WINDOW);
-        gtk_widget_set_name(login_window, "login");
         if (login_window) {
             activate(app, entries);
             gtk_window_close(GTK_WINDOW(login_window));
-            g_signal_connect(app, "activate", G_CALLBACK(activate), entries);
         }
     } else {
         g_warning("Špatné heslo");
@@ -164,12 +167,12 @@ void activate(GtkApplication *app, gpointer user_data) {
     entries->entry_email = entry_email;
     entries->entry_password = entry_password;
 
-    // Tlačítko pro přidání položky
+    // Button for adding new entry
     GtkWidget *add_button = gtk_button_new_with_label("New Entry");
     g_signal_connect(add_button, "clicked", G_CALLBACK(on_add_entry_clicked), entries); 
     gtk_box_append(GTK_BOX(vbox), add_button);
 
-    // Grid na položky
+    // Grid for entries
     grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(grid), 20);  
     gtk_grid_set_row_spacing(GTK_GRID(grid), 10);     
@@ -180,16 +183,15 @@ void activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_hexpand(grid, TRUE);
     gtk_widget_set_vexpand(grid, TRUE);
 
-    // ScrolledWindow obal
+    // ScrolledWindow wrapper
     GtkWidget *scrolled_window = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_window), grid);
     gtk_widget_set_hexpand(scrolled_window, TRUE);
     gtk_widget_set_vexpand(scrolled_window, TRUE);
 
-    // added scrolled window to the main vbox
+    // Add scrolled window to the main vbox
     gtk_box_append(GTK_BOX(vbox), scrolled_window);
-    
 
     // Load existing entries
     load_entries_from_file();
@@ -198,6 +200,8 @@ void activate(GtkApplication *app, gpointer user_data) {
 }
 
 void on_show_button_clicked(GtkButton *button, gpointer user_data) {
+    (void)user_data; // Silence unused parameter warning
+    
     const char *encrypted_password = g_object_get_data(G_OBJECT(button), "encrypted_password");
     int row = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "row"));
     
@@ -246,6 +250,8 @@ void on_add_entry_clicked(GtkButton *button, gpointer user_data) {
 }
 
 void on_copy_button_clicked(GtkButton *button, gpointer user_data) {
+    (void)user_data; // Silence unused parameter warning
+    
     const char *encrypted_password = g_object_get_data(G_OBJECT(button), "encrypted_password");
     
     if (encrypted_password) {
@@ -282,21 +288,98 @@ void on_copy_button_clicked(GtkButton *button, gpointer user_data) {
         GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
         gdk_clipboard_set_text(clipboard, (char *)decrypted);
         
-        GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(button));
-        if (GTK_IS_WINDOW(root)) {
-            GtkWidget *message_dialog = gtk_message_dialog_new(
-                GTK_WINDOW(root),
-                GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-                GTK_MESSAGE_INFO,
-                GTK_BUTTONS_OK,
-                "Password copied to clipboard"
-            );
-            g_signal_connect(message_dialog, "response", G_CALLBACK(gtk_window_destroy), NULL);
-            gtk_window_present(GTK_WINDOW(message_dialog));
-        }
+        g_print("Password copied to clipboard\n");
     }
 }
-void on_delete_button_clicked(GtkButton *button , gpointer user_data){
-    
 
+typedef struct {
+    int row;
+    char *service_encrypted;
+    char *email_encrypted;
+    char *password_encrypted;
+} DeleteData;
+
+void on_delete_button_clicked(GtkButton *button, gpointer user_data) {
+    (void)user_data; // Silence unused parameter warning
+    
+    int row = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "row"));
+    const char *service_encrypted = g_object_get_data(G_OBJECT(button), "service_encrypted");
+    const char *email_encrypted = g_object_get_data(G_OBJECT(button), "email_encrypted");
+    const char *password_encrypted = g_object_get_data(G_OBJECT(button), "password_encrypted");
+    
+    if (!service_encrypted || !email_encrypted || !password_encrypted) {
+        g_warning("Missing encrypted data for deletion.");
+        return;
+    }
+    
+    // Create delete data structure
+    DeleteData *delete_data = g_new(DeleteData, 1);
+    delete_data->row = row;
+    delete_data->service_encrypted = g_strdup(service_encrypted);
+    delete_data->email_encrypted = g_strdup(email_encrypted);
+    delete_data->password_encrypted = g_strdup(password_encrypted);
+    
+    // Create confirmation dialog
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(button));
+    if (GTK_IS_WINDOW(root)) {
+        GtkWidget *dialog = gtk_dialog_new_with_buttons(
+            "Confirm Deletion",
+            GTK_WINDOW(root),
+            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+            "Cancel", GTK_RESPONSE_CANCEL,
+            "Delete", GTK_RESPONSE_YES,
+            NULL
+        );
+        
+        // Add content to dialog
+        GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+        GtkWidget *label = gtk_label_new("Are you sure you want to delete this entry?\nThis action cannot be undone.");
+        gtk_box_append(GTK_BOX(content_area), label);
+        gtk_widget_set_margin_top(label, 20);
+        gtk_widget_set_margin_bottom(label, 20);
+        gtk_widget_set_margin_start(label, 20);
+        gtk_widget_set_margin_end(label, 20);
+        
+        // Connect response signal
+        g_signal_connect(dialog, "response", G_CALLBACK(on_delete_dialog_response), delete_data);
+        
+        // Show dialog
+        gtk_window_present(GTK_WINDOW(dialog));
+    } else {
+        // Free memory if dialog can't be shown
+        g_free(delete_data->service_encrypted);
+        g_free(delete_data->email_encrypted);
+        g_free(delete_data->password_encrypted);
+        g_free(delete_data);
+    }
+}
+
+void on_delete_dialog_response(GtkDialog *dialog, int response, gpointer user_data) {
+    DeleteData *delete_data = (DeleteData *)user_data;
+    
+    if (response == GTK_RESPONSE_YES) {
+        // User confirmed deletion
+        delete_entry_from_file(delete_data->service_encrypted, 
+                               delete_data->email_encrypted, 
+                               delete_data->password_encrypted);
+        
+        // Remove widgets from grid (all 6 columns: service, email, password, show, copy, delete)
+        for (int col = 0; col < 6; col++) {
+            GtkWidget *widget = gtk_grid_get_child_at(GTK_GRID(grid), col, delete_data->row);
+            if (widget) {
+                gtk_grid_remove(GTK_GRID(grid), widget);
+            }
+        }
+        
+        g_print("Entry deleted successfully\n");
+    }
+    
+    // Clean up
+    g_free(delete_data->service_encrypted);
+    g_free(delete_data->email_encrypted);
+    g_free(delete_data->password_encrypted);
+    g_free(delete_data);
+    
+    // Destroy the dialog
+    gtk_window_destroy(GTK_WINDOW(dialog));
 }

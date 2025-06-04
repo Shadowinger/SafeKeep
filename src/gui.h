@@ -22,6 +22,7 @@ void on_show_button_clicked(GtkButton *button, gpointer user_data);
 void on_add_entry_clicked(GtkButton *button, gpointer user_data);
 void on_copy_button_clicked(GtkButton *button, gpointer user_data);
 void on_delete_button_clicked(GtkButton *button, gpointer user_data);
+void on_delete_dialog_response(GtkDialog *dialog, int response, gpointer user_data);
 
 // Global variables needed across files
 extern GtkWidget *grid;

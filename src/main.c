@@ -3,10 +3,14 @@
 //
 
 #include "gui.h"
+#include "storage.h"
 #include <gtk/gtk.h>
 
 int main(int argc, char **argv) {
     gtk_init();
+
+    // Create password file if it doesn't exist
+    create_password_file_if_not_exists();
 
     EntryWidgets *entries = g_malloc0(sizeof(EntryWidgets));  // Allocate memory for EntryWidgets
 
