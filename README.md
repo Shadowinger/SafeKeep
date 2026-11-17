@@ -4,17 +4,12 @@ A secure, cross-platform password manager built with GTK4 and OpenSSL encryption
 
 ## Features
 
-- **Secure Encryption**: Uses AES-256-CBC encryption with OpenSSL
-- **Master Password Protection**: Single master password protects all stored credentials
+- **Secure Encryption**: AES-256-GCM via OpenSSL, with the key derived from your master password
+- **Master Password Protection**: The master password is never stored; it is the only way to decrypt your data
 - **User-Friendly Interface**: Clean GTK4-based GUI
 - **Password Management**: Add, view, copy, and delete password entries
 - **Hidden Storage**: Passwords stored in encrypted format in hidden directory
 - **Cross-Platform**: Works on Linux, macOS, and Windows
-
-## Screenshots
-
-![Login Screen](screenshots/login.png)
-![Main Interface](screenshots/main.png)
 
 ## Installation
 
@@ -45,7 +40,7 @@ sudo dnf install gtk4-devel openssl-devel gcc pkg-config
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/SafeKeep.git
+git clone https://github.com/Shadowinger/SafeKeep.git
 cd SafeKeep
 ```
 
@@ -70,7 +65,7 @@ make run
 
 1. Launch SafeKeep
 2. Enter a master password when prompted
-3. This master password will be used to encrypt and protect all your stored passwords
+3. This master password will be used to encrypt and protect all your stored passwords. It cannot be recovered; if you forget it, your stored passwords are lost
 
 ### Adding Password Entries
 
@@ -84,15 +79,16 @@ make run
 ### Managing Passwords
 
 - **Show Password**: Click the "Show" button to temporarily reveal the password
-- **Copy Password**: Click the "Copy" button to copy the password to clipboard without showing it
+- **Copy Password**: Click the "Copy" button to copy the password to clipboard without showing it. The clipboard is cleared after 30 seconds
 - **Delete Entry**: Click the "Delete" button to permanently remove an entry
 
 ## Security Features
 
-- **AES-256-CBC Encryption**: Industry-standard encryption for all stored data
-- **Master Password**: Single point of authentication
-- **Hidden Storage**: Data stored in `~/.safekeep/` directory with restricted permissions
-- **Memory Protection**: Passwords cleared from memory after use
+- **Key Derivation**: The encryption key is derived from the master password with PBKDF2-HMAC-SHA256 (600,000 iterations) and a random 16-byte salt. The key exists only in memory while the app is running
+- **Authenticated Encryption**: Every value is encrypted with AES-256-GCM using a fresh random 12-byte nonce, so identical passwords produce different ciphertexts and tampering with the file is detected
+- **Master Password Check**: The master password is never stored. It is verified by decrypting a check record created on first launch
+- **Hidden Storage**: Data stored in `~/.safekeep/` (directory `0700`, file `0600`)
+- **Memory Protection**: The key and decrypted passwords are wiped with `OPENSSL_cleanse` after use, and password fields use GTK's locked (non-swappable) password buffer. Text shown in labels or placed on the clipboard is managed by GTK and cannot be wiped by the app
 - **No Plain Text Storage**: All sensitive data encrypted at rest
 
 ## File Structure
@@ -107,8 +103,6 @@ SafeKeep/
 │   ├── storage.h       # Storage function declarations
 │   ├── crypto.c        # Encryption/decryption functions
 │   └── crypto.h        # Crypto function declarations
-├── data/               # Application data directory
-│   └── passwords.dat   # Encrypted password storage
 ├── ui/                 # User interface resources
 │   └── styles.css      # GTK4 styling
 ├── Makefile           # Build configuration
@@ -117,7 +111,7 @@ SafeKeep/
 
 ## Build Options
 
-- **Debug Build**: `make debug` - Includes debug symbols and verbose output
+- **Default Build**: `make` - Includes debug symbols
 - **Release Build**: `make release` - Optimized for production use
 - **Clean Build**: `make clean` - Remove build artifacts
 - **Run Application**: `make run` - Build and run in one command
@@ -125,33 +119,29 @@ SafeKeep/
 ## Advanced Usage
 
 ### Memory Leak Checking
+Requires [valgrind](https://valgrind.org/):
 ```bash
 make check-memory
 ```
 
-### Code Formatting
-```bash
-make format
-```
-
 ### Static Analysis
+Requires [cppcheck](https://cppcheck.sourceforge.io/):
 ```bash
 make analyze
 ```
 
 ## Configuration
 
-SafeKeep stores its configuration and data in:
-- **Linux/macOS**: `~/.safekeep/`
-- **Windows**: `%APPDATA%\SafeKeep\`
+SafeKeep stores everything in a single file:
+- **Linux/macOS**: `~/.safekeep/passwords.dat`
+- **Windows**: `%USERPROFILE%\.safekeep\passwords.dat`
 
-### Master Password File
-The master password hash is stored in:
-- `~/.safekeep/main-pass.dat`
+The file holds the salt, the master password check record, and the encrypted entries.
 
-### Password Database
-Encrypted passwords are stored in:
-- `data/passwords.dat`
+### Upgrading from v1.0.0
+Version 1.0.0 encrypted data with a fixed key and stored the master password in plain text. That data is not migrated:
+- Delete `~/.safekeep/main-pass.dat`, it contains your old master password in plain text
+- Entries in the old `data/passwords.dat` are not read anymore; add them again after setting a new master password
 
 ## Security Considerations
 
@@ -174,13 +164,7 @@ Encrypted passwords are stored in:
 
 **Encryption Errors**
 - Ensure OpenSSL is properly installed and linked
-- Verify that the master password file isn't corrupted
-
-### Debug Mode
-Run with debug information:
-```bash
-make run-debug
-```
+- "Wrong master password or damaged vault" means the password is wrong or `~/.safekeep/passwords.dat` was modified
 
 ## Contributing
 
@@ -219,6 +203,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Changelog
 
+### Unreleased
+- Key derived from the master password (PBKDF2-HMAC-SHA256) instead of a hard-coded key
+- AES-256-GCM with a random nonce per value instead of AES-256-CBC with a fixed IV
+- Master password is no longer stored
+- Data moved to `~/.safekeep/passwords.dat`
+- Clipboard is cleared 30 seconds after copying a password
+
 ### v1.0.0 (2025-06-04)
 - Initial release
 - AES-256-CBC encryption
@@ -231,7 +222,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 For support, bug reports, or feature requests:
 - Open an issue on GitHub
-- Email: your.email@example.com
 
 ## Roadmap
 

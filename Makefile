@@ -1,7 +1,8 @@
 # Makefile for Password Manager
 CC = gcc
 
-CFLAGS = -Wall -Wextra -g `pkg-config --cflags gtk4 openssl`
+WARNINGS = -Wall -Wextra
+CFLAGS = $(WARNINGS) -g `pkg-config --cflags gtk4 openssl`
 
 LIBS = `pkg-config --libs gtk4 openssl`
 
@@ -19,11 +20,14 @@ all: $(TARGET)
 $(TARGET): $(SRCS) $(HDRS)
 	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET) $(LIBS)
 
+release: clean
+	$(MAKE) CFLAGS="$(WARNINGS) -O2 -DNDEBUG `pkg-config --cflags gtk4 openssl`"
+
 clean:
 	rm -f $(TARGET)
 
 setup:
-	mkdir -p data ui
+	mkdir -p ui
 	@if [ ! -f ui/styles.css ]; then \
 		echo "/* SafeKeep Password Manager Styles */" > ui/styles.css; \
 		echo "#main-window { background-color: #f5f5f5; }" >> ui/styles.css; \
@@ -36,3 +40,11 @@ setup:
 
 run: $(TARGET)
 	./$(TARGET)
+
+check-memory: $(TARGET)
+	valgrind --leak-check=full ./$(TARGET)
+
+analyze:
+	cppcheck --enable=warning,style,performance --std=c11 --quiet $(SRC_DIR)
+
+.PHONY: all release clean setup run check-memory analyze
