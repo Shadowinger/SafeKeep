@@ -6,338 +6,250 @@
 #include "gui.h"
 #include "crypto.h"
 #include <gtk/gtk.h>
-#include <string.h>
-#include <sys/stat.h>
 #include <errno.h>
+#include <string.h>
+
+// Vault file layout, one base64 value per line:
+//   salt, verifier (VERIFIER_TEXT encrypted with the master key), then service/email/password per entry.
+#define VERIFIER_TEXT "SAFEKEEP-OK"
+#define HEADER_LINES 2
+#define RECORD_LINES 3
 
 extern GtkWidget *grid;
 extern int row_counter;
 
-void add_new_entry(const char *service_text, const char *email_text, const char *password_text) {
-    unsigned char encrypted_service[512];
-    unsigned char encrypted_email[512];
-    unsigned char encrypted_password[512];
-    char encoded_service[1024];
-    char encoded_email[1024];
-    char encoded_password[1024];
-    int ciphertext_len;
+static const char *vault_path(void) {
+    static char *path = NULL;
+    if (!path) {
+        path = g_build_filename(g_get_home_dir(), ".safekeep", "passwords.dat", NULL);
+    }
+    return path;
+}
 
-    // Encrypt and encode password first 
-    encrypt_data(password_text, encrypted_password, encoded_password, &ciphertext_len);
+// Reads the vault split into lines. *lines stays NULL if the vault does not exist yet or is empty.
+static gboolean read_vault(char ***lines) {
+    char *contents = NULL;
+    GError *error = NULL;
 
-    // Copy text from Entry fields
-    char *service_copy = g_strdup(service_text);
-    char *email_copy = g_strdup(email_text);
-    char *password_copy = g_strdup(password_text);
+    *lines = NULL;
+    if (!g_file_get_contents(vault_path(), &contents, NULL, &error)) {
+        gboolean missing = g_error_matches(error, G_FILE_ERROR, G_FILE_ERROR_NOENT);
+        if (!missing) {
+            g_warning("Cannot read %s: %s", vault_path(), error->message);
+        }
+        g_error_free(error);
+        return missing;
+    }
+    if (contents[0] != '\0') {
+        *lines = g_strsplit(contents, "\n", -1);
+    }
+    g_free(contents);
+    return TRUE;
+}
 
-    // Create new widgets for the grid
-    GtkWidget *label_service = gtk_label_new(service_copy);
-    gtk_widget_set_name(label_service, "label");
-    gtk_widget_set_halign(label_service, GTK_ALIGN_START);
-    gtk_widget_set_margin_start(label_service, 10);
-    gtk_widget_set_margin_end(label_service, 10);
-    gtk_widget_set_margin_top(label_service, 5);
-    gtk_widget_set_margin_bottom(label_service, 5);
-    gtk_widget_set_hexpand(label_service, TRUE);
-    gtk_widget_set_valign(label_service, GTK_ALIGN_CENTER);
-    gtk_grid_attach(GTK_GRID(grid), label_service, 0, row_counter, 1, 1);
+// Replaces the vault atomically, so a failed write never leaves a half-written file.
+static gboolean write_vault(const char *contents) {
+    char *dir = g_path_get_dirname(vault_path());
+    GError *error = NULL;
+    gboolean ok = FALSE;
 
-    // Apply the same margins to email and password labels
-    GtkWidget *label_email = gtk_label_new(email_copy);
-    gtk_widget_set_name(label_email, "email");
-    gtk_widget_set_halign(label_email, GTK_ALIGN_START);
-    gtk_widget_set_margin_start(label_email, 10);
-    gtk_widget_set_margin_end(label_email, 10);
-    gtk_widget_set_margin_top(label_email, 5);
-    gtk_widget_set_margin_bottom(label_email, 5);
-    gtk_widget_set_hexpand(label_email, TRUE);
-    gtk_widget_set_valign(label_email, GTK_ALIGN_CENTER);
-    gtk_grid_attach(GTK_GRID(grid), label_email, 1, row_counter, 1, 1);
+    if (g_mkdir_with_parents(dir, 0700) != 0) {
+        g_warning("Cannot create %s: %s", dir, g_strerror(errno));
+    } else if (!g_file_set_contents_full(vault_path(), contents, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error)) {
+        g_warning("Cannot write %s: %s", vault_path(), error->message);
+        g_error_free(error);
+    } else {
+        ok = TRUE;
+    }
+    g_free(dir);
+    return ok;
+}
 
-    GtkWidget *label_password = gtk_label_new("********");
-    gtk_widget_set_halign(label_password, GTK_ALIGN_START);
-    gtk_widget_set_margin_start(label_password, 10);
-    gtk_widget_set_margin_end(label_password, 10);
-    gtk_widget_set_margin_top(label_password, 5);
-    gtk_widget_set_margin_bottom(label_password, 5);
-    gtk_widget_set_hexpand(label_password, TRUE);
-    gtk_widget_set_valign(label_password, GTK_ALIGN_CENTER);
-    gtk_grid_attach(GTK_GRID(grid), label_password, 2, row_counter, 1, 1);
-    
-    GtkWidget *show_button = gtk_button_new_with_label("Show");
-    gtk_widget_set_name(show_button, "show-button");
-    gtk_widget_set_margin_start(show_button, 5);
-    gtk_widget_set_margin_end(show_button, 10);
-    gtk_widget_set_margin_top(show_button, 2);
-    gtk_widget_set_margin_bottom(show_button, 2);
-    gtk_widget_set_halign(show_button, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(show_button, GTK_ALIGN_CENTER);
-    g_object_set_data(G_OBJECT(show_button), "row", GINT_TO_POINTER(row_counter));
-    g_object_set_data_full(G_OBJECT(show_button), "encrypted_password", g_strdup(encoded_password), g_free);
-    g_signal_connect(show_button, "clicked", G_CALLBACK(on_show_button_clicked), NULL);
+static gboolean create_vault(const char *master_password) {
+    unsigned char salt[CRYPTO_SALT_LEN];
+    if (!crypto_new_salt(salt) || !crypto_set_key(master_password, salt)) {
+        g_warning("Cannot derive encryption key.");
+        return FALSE;
+    }
+
+    char *verifier = crypto_encrypt(VERIFIER_TEXT);
+    char *salt_encoded = g_base64_encode(salt, sizeof(salt));
+    gboolean ok = FALSE;
+    if (verifier) {
+        char *contents = g_strdup_printf("%s\n%s\n", salt_encoded, verifier);
+        ok = write_vault(contents);
+        g_free(contents);
+    }
+    g_free(salt_encoded);
+    crypto_free(verifier);
+
+    if (ok) {
+        g_message("Master password set.");
+    } else {
+        crypto_clear_key();
+    }
+    return ok;
+}
+
+// Creates the vault on first run, otherwise derives the key and checks it against the verifier.
+gboolean storage_unlock(const char *master_password) {
+    char **lines;
+    if (!read_vault(&lines)) {
+        return FALSE;
+    }
+    if (!lines) {
+        return create_vault(master_password);
+    }
+
+    gboolean ok = FALSE;
+    if (g_strv_length(lines) >= HEADER_LINES) {
+        gsize salt_len = 0;
+        guchar *salt = g_base64_decode(lines[0], &salt_len);
+        if (salt_len == CRYPTO_SALT_LEN && crypto_set_key(master_password, salt)) {
+            char *check = crypto_decrypt(lines[1]);
+            ok = check && strcmp(check, VERIFIER_TEXT) == 0;
+            crypto_free(check);
+        }
+        g_free(salt);
+    }
+    g_strfreev(lines);
+
+    if (!ok) {
+        crypto_clear_key();
+        g_warning("Wrong master password or damaged vault.");
+    }
+    return ok;
+}
+
+static GtkWidget *new_cell_label(const char *text, const char *name) {
+    GtkWidget *label = gtk_label_new(text);
+    gtk_widget_set_name(label, name);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(label, 10);
+    gtk_widget_set_margin_end(label, 10);
+    gtk_widget_set_margin_top(label, 5);
+    gtk_widget_set_margin_bottom(label, 5);
+    gtk_widget_set_hexpand(label, TRUE);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    return label;
+}
+
+static GtkWidget *new_row_button(const char *text, const char *name, GCallback handler) {
+    GtkWidget *button = gtk_button_new_with_label(text);
+    gtk_widget_set_name(button, name);
+    gtk_widget_set_margin_start(button, 5);
+    gtk_widget_set_margin_end(button, 10);
+    gtk_widget_set_margin_top(button, 2);
+    gtk_widget_set_margin_bottom(button, 2);
+    gtk_widget_set_halign(button, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
+    g_object_set_data(G_OBJECT(button), "row", GINT_TO_POINTER(row_counter));
+    g_signal_connect(button, "clicked", handler, NULL);
+    return button;
+}
+
+static void add_entry_row(const char *service_text, const char *email_text,
+                          const char *service_encrypted, const char *email_encrypted, const char *password_encrypted) {
+    gtk_grid_attach(GTK_GRID(grid), new_cell_label(service_text, "label-service"), 0, row_counter, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), new_cell_label(email_text, "label-email"), 1, row_counter, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), new_cell_label("********", "label-password"), 2, row_counter, 1, 1);
+
+    GtkWidget *show_button = new_row_button("Show", "show-button", G_CALLBACK(on_show_button_clicked));
+    g_object_set_data_full(G_OBJECT(show_button), "encrypted_password", g_strdup(password_encrypted), g_free);
     gtk_grid_attach(GTK_GRID(grid), show_button, 3, row_counter, 1, 1);
 
-    GtkWidget *copy_button = gtk_button_new_with_label("Copy");
-    gtk_widget_set_name(copy_button, "copy-button");
-    gtk_widget_set_margin_start(copy_button, 5);
-    gtk_widget_set_margin_end(copy_button, 10);
-    gtk_widget_set_margin_top(copy_button, 2);
-    gtk_widget_set_margin_bottom(copy_button, 2);
-    gtk_widget_set_halign(copy_button, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(copy_button, GTK_ALIGN_CENTER);
-    g_object_set_data(G_OBJECT(copy_button), "row", GINT_TO_POINTER(row_counter));
-    g_object_set_data_full(G_OBJECT(copy_button), "encrypted_password", g_strdup(encoded_password), g_free);
-    g_signal_connect(copy_button, "clicked", G_CALLBACK(on_copy_button_clicked), NULL);
+    GtkWidget *copy_button = new_row_button("Copy", "copy-button", G_CALLBACK(on_copy_button_clicked));
+    g_object_set_data_full(G_OBJECT(copy_button), "encrypted_password", g_strdup(password_encrypted), g_free);
     gtk_grid_attach(GTK_GRID(grid), copy_button, 4, row_counter, 1, 1);
 
-    GtkWidget *delete_button = gtk_button_new_with_label("Delete");
-    gtk_widget_set_name(delete_button, "delete-button");
-    gtk_widget_set_margin_start(delete_button, 5);
-    gtk_widget_set_margin_end(delete_button, 10);
-    gtk_widget_set_margin_top(delete_button, 2);
-    gtk_widget_set_margin_bottom(delete_button, 2);
-    gtk_widget_set_halign(delete_button, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(delete_button, GTK_ALIGN_CENTER);
-    g_object_set_data(G_OBJECT(delete_button), "row", GINT_TO_POINTER(row_counter));
-    g_object_set_data_full(G_OBJECT(delete_button), "service_encrypted", g_strdup(encoded_service), g_free);
-    g_object_set_data_full(G_OBJECT(delete_button), "email_encrypted", g_strdup(encoded_email), g_free);
-    g_object_set_data_full(G_OBJECT(delete_button), "password_encrypted", g_strdup(encoded_password), g_free);
-    g_signal_connect(delete_button, "clicked", G_CALLBACK(on_delete_button_clicked), NULL);
+    GtkWidget *delete_button = new_row_button("Delete", "delete-button", G_CALLBACK(on_delete_button_clicked));
+    g_object_set_data_full(G_OBJECT(delete_button), "service_encrypted", g_strdup(service_encrypted), g_free);
+    g_object_set_data_full(G_OBJECT(delete_button), "email_encrypted", g_strdup(email_encrypted), g_free);
+    g_object_set_data_full(G_OBJECT(delete_button), "password_encrypted", g_strdup(password_encrypted), g_free);
     gtk_grid_attach(GTK_GRID(grid), delete_button, 5, row_counter, 1, 1);
 
-
-
-
-
-
-    FILE *file = fopen("data/passwords.dat", "a");
-    if (!file) {
-        g_warning("Nelze otevřít soubor data/passwords.dat");
-        return;
-    }
-
-    // Encrypt and encode service
-    encrypt_data(service_text, encrypted_service, encoded_service, &ciphertext_len);
-
-    // Encrypt and encode email
-    encrypt_data(email_text, encrypted_email, encoded_email, &ciphertext_len);
-
-    // Write to file
-    fprintf(file, "%s\n%s\n%s\n", encoded_service, encoded_email, encoded_password);
-    fclose(file);
-
     row_counter++;
-
-    // Update layout
-    gtk_widget_set_visible(label_service, true);
-    gtk_widget_set_visible(label_email, true);
-    gtk_widget_set_visible(label_password, true);
-    gtk_widget_set_visible(show_button, true);
-    gtk_widget_set_visible(copy_button, true);
-    gtk_widget_set_visible(delete_button, true);
-
-    // Free copies
-    g_free(service_copy);
-    g_free(email_copy);
-    g_free(password_copy);
 }
 
-void load_entries_from_file() {
-    FILE *file = fopen("data/passwords.dat", "r");
-    if (file) {
-        char service_line[1024];
-        char email_line[1024];
-        char password_line[1024];
+void add_new_entry(const char *service_text, const char *email_text, const char *password_text) {
+    char *service_encrypted = crypto_encrypt(service_text);
+    char *email_encrypted = crypto_encrypt(email_text);
+    char *password_encrypted = crypto_encrypt(password_text);
+    char *contents = NULL;
+    GError *error = NULL;
 
-        while (fgets(service_line, sizeof(service_line), file) &&
-               fgets(email_line, sizeof(email_line), file) &&
-               fgets(password_line, sizeof(password_line), file)) {
-
-            service_line[strcspn(service_line, "\n")] = 0;
-            email_line[strcspn(email_line, "\n")] = 0;
-            password_line[strcspn(password_line, "\n")] = 0;
-
-            GtkWidget *label_service = gtk_label_new("");
-            gtk_widget_set_name(label_service, "label-service");
-            gtk_widget_set_halign(label_service, GTK_ALIGN_START);
-            gtk_widget_set_margin_start(label_service, 10);
-            gtk_widget_set_margin_end(label_service, 10);
-            gtk_widget_set_margin_top(label_service, 5);
-            gtk_widget_set_margin_bottom(label_service, 5);
-            gtk_widget_set_hexpand(label_service, TRUE);
-            gtk_widget_set_valign(label_service, GTK_ALIGN_CENTER);
-            gtk_grid_attach(GTK_GRID(grid), label_service, 0, row_counter, 1, 1);
-            decrypt_and_show_entry(service_line, label_service);
-
-            GtkWidget *label_email = gtk_label_new("");
-            gtk_widget_set_name(label_email, "label-email");
-            gtk_widget_set_halign(label_email, GTK_ALIGN_START);
-            gtk_widget_set_margin_start(label_email, 10);
-            gtk_widget_set_margin_end(label_email, 10);
-            gtk_widget_set_margin_top(label_email, 5);
-            gtk_widget_set_margin_bottom(label_email, 5);
-            gtk_widget_set_hexpand(label_email, TRUE);
-            gtk_widget_set_valign(label_email, GTK_ALIGN_CENTER);
-            gtk_grid_attach(GTK_GRID(grid), label_email, 1, row_counter, 1, 1);
-            decrypt_and_show_entry(email_line, label_email);
-
-            GtkWidget *label_password = gtk_label_new("********");
-            gtk_widget_set_halign(label_password, GTK_ALIGN_START);
-            gtk_widget_set_name(label_password, "label-password");
-            gtk_widget_set_margin_start(label_password, 10);
-            gtk_widget_set_margin_end(label_password, 10);
-            gtk_widget_set_margin_top(label_password, 5);
-            gtk_widget_set_margin_bottom(label_password, 5);
-            gtk_widget_set_hexpand(label_password, TRUE);
-            gtk_widget_set_valign(label_password, GTK_ALIGN_CENTER);
-            gtk_grid_attach(GTK_GRID(grid), label_password, 2, row_counter, 1, 1);
-
-            GtkWidget *show_button = gtk_button_new_with_label("Show");
-            gtk_widget_set_name(show_button, "show-button");
-            gtk_widget_set_margin_start(show_button, 5);
-            gtk_widget_set_margin_end(show_button, 10);
-            gtk_widget_set_margin_top(show_button, 2);
-            gtk_widget_set_margin_bottom(show_button, 2);
-            gtk_widget_set_halign(show_button, GTK_ALIGN_CENTER);
-            gtk_widget_set_valign(show_button, GTK_ALIGN_CENTER);
-            g_object_set_data(G_OBJECT(show_button), "row", GINT_TO_POINTER(row_counter));
-            g_object_set_data_full(G_OBJECT(show_button), "encrypted_password", g_strdup(password_line), g_free);
-            g_signal_connect(show_button, "clicked", G_CALLBACK(on_show_button_clicked), NULL);
-            gtk_grid_attach(GTK_GRID(grid), show_button, 3, row_counter, 1, 1);
-
-            GtkWidget *copy_button = gtk_button_new_with_label("Copy");
-            gtk_widget_set_name(copy_button, "copy-button");
-            gtk_widget_set_margin_start(copy_button, 5);
-            gtk_widget_set_margin_end(copy_button, 10);
-            gtk_widget_set_margin_top(copy_button, 2);
-            gtk_widget_set_margin_bottom(copy_button, 2);
-            gtk_widget_set_halign(copy_button, GTK_ALIGN_CENTER);
-            gtk_widget_set_valign(copy_button, GTK_ALIGN_CENTER);
-            g_object_set_data(G_OBJECT(copy_button), "row", GINT_TO_POINTER(row_counter));
-            g_signal_connect(copy_button, "clicked", G_CALLBACK(on_copy_button_clicked), NULL);
-            g_object_set_data_full(G_OBJECT(copy_button), "encrypted_password", g_strdup(password_line), g_free);
-            gtk_grid_attach(GTK_GRID(grid), copy_button, 4, row_counter, 1, 1); 
-
-            // Create delete button for the loaded entry
-            GtkWidget *delete_button = gtk_button_new_with_label("Delete");
-            gtk_widget_set_name(delete_button, "delete-button");
-            gtk_widget_set_margin_start(delete_button, 5);
-            gtk_widget_set_margin_end(delete_button, 10);
-            gtk_widget_set_margin_top(delete_button, 2);
-            gtk_widget_set_margin_bottom(delete_button, 2);
-            gtk_widget_set_halign(delete_button, GTK_ALIGN_CENTER);
-            gtk_widget_set_valign(delete_button, GTK_ALIGN_CENTER);
-            g_object_set_data(G_OBJECT(delete_button), "row", GINT_TO_POINTER(row_counter));
-            g_object_set_data_full(G_OBJECT(delete_button), "service_encrypted", g_strdup(service_line), g_free);
-            g_object_set_data_full(G_OBJECT(delete_button), "email_encrypted", g_strdup(email_line), g_free);
-            g_object_set_data_full(G_OBJECT(delete_button), "password_encrypted", g_strdup(password_line), g_free);
-            g_signal_connect(delete_button, "clicked", G_CALLBACK(on_delete_button_clicked), NULL);
-            gtk_grid_attach(GTK_GRID(grid), delete_button, 5, row_counter, 1, 1);
-
-            row_counter++;
-        }
-        fclose(file);
-    }
-}
-
-void create_password_file_if_not_exists() {
-    // Create data directory if it doesn't exist
-    struct stat st = {0};
-    if (stat("data", &st) == -1) {
-        #ifdef _WIN32
-        mkdir("data");
-        #else
-        mkdir("data", 0700);
-        #endif
-    }
-    
-    // Check if password file exists
-    FILE *file = fopen("data/passwords.dat", "r");
-    if (file) {
-        fclose(file);
-        return; // File already exists
-    }
-    
-    // Create the file
-    file = fopen("data/passwords.dat", "w");
-    if (!file) {
-        g_warning("Cannot create password file.");
-        return;
-    }
-    
-
-    
-    #ifndef _WIN32
-    chmod("data/passwords.dat", 0600); // Restrict permissions
-    #endif
-    
-    g_message("Password file created successfully.");
-}
-
-void delete_entry_from_file(const char *service_encrypted, const char *email_encrypted, const char *password_encrypted) {
-    FILE *file = fopen("data/passwords.dat", "r");
-    if (!file) {
-        g_warning("Cannot open password file for reading.");
-        return;
-    }
-    
-    FILE *temp_file = fopen("data/passwords.tmp", "w");
-    if (!temp_file) {
-        g_warning("Cannot create temporary file.");
-        fclose(file);
-        return;
-    }
-    
-    char service_line[1024];
-    char email_line[1024];
-    char password_line[1024];
-    gboolean entry_found = FALSE;
-    
-    // Copy header if it exists
-    long pos = ftell(file);
-    if (fgets(service_line, sizeof(service_line), file)) {
-        if (service_line[0] == '#') {
-            fprintf(temp_file, "%s", service_line);
-        } else {
-            fseek(file, pos, SEEK_SET); // Go back if not a comment
-        }
-    }
-    
-    // Read and copy all entries except the one to delete
-    while (fgets(service_line, sizeof(service_line), file) &&
-           fgets(email_line, sizeof(email_line), file) &&
-           fgets(password_line, sizeof(password_line), file)) {
-        
-        // Remove trailing newlines
-        service_line[strcspn(service_line, "\n")] = 0;
-        email_line[strcspn(email_line, "\n")] = 0;
-        password_line[strcspn(password_line, "\n")] = 0;
-        
-        // Skip the entry to delete
-        if (strcmp(service_line, service_encrypted) == 0 && 
-            strcmp(email_line, email_encrypted) == 0 && 
-            strcmp(password_line, password_encrypted) == 0) {
-            entry_found = TRUE;
-            continue; // Skip this entry
-        }
-        
-        // Write entry to temp file
-        fprintf(temp_file, "%s\n%s\n%s\n", service_line, email_line, password_line);
-    }
-    
-    fclose(file);
-    fclose(temp_file);
-    
-    if (entry_found) {
-        // Replace original file with temp file
-        if (remove("data/passwords.dat") == 0 && rename("data/passwords.tmp", "data/passwords.dat") == 0) {
-            g_message("Entry deleted successfully from file.");
-        } else {
-            g_warning("Failed to update password file.");
-            remove("data/passwords.tmp"); // Clean up temp file
-        }
+    if (!service_encrypted || !email_encrypted || !password_encrypted) {
+        g_warning("Encryption failed, entry was not saved.");
+    } else if (!g_file_get_contents(vault_path(), &contents, NULL, &error)) {
+        g_warning("Cannot read %s: %s", vault_path(), error->message);
+        g_error_free(error);
     } else {
-        g_warning("Entry not found in file.");
-        remove("data/passwords.tmp"); // Clean up temp file
+        char *updated = g_strdup_printf("%s%s\n%s\n%s\n", contents, service_encrypted, email_encrypted, password_encrypted);
+        if (write_vault(updated)) {
+            add_entry_row(service_text, email_text, service_encrypted, email_encrypted, password_encrypted);
+        }
+        g_free(updated);
     }
+
+    g_free(contents);
+    crypto_free(service_encrypted);
+    crypto_free(email_encrypted);
+    crypto_free(password_encrypted);
+}
+
+void load_entries_from_file(void) {
+    char **lines;
+    if (!read_vault(&lines) || !lines) {
+        return;
+    }
+
+    guint count = g_strv_length(lines);
+    for (guint i = HEADER_LINES; i + RECORD_LINES <= count; i += RECORD_LINES) {
+        char *service = crypto_decrypt(lines[i]);
+        char *email = crypto_decrypt(lines[i + 1]);
+        if (service && email) {
+            add_entry_row(service, email, lines[i], lines[i + 1], lines[i + 2]);
+        } else {
+            g_warning("Skipping an entry that cannot be decrypted.");
+        }
+        crypto_free(service);
+        crypto_free(email);
+    }
+    g_strfreev(lines);
+}
+
+gboolean delete_entry_from_file(const char *service_encrypted, const char *email_encrypted, const char *password_encrypted) {
+    char **lines;
+    if (!read_vault(&lines) || !lines) {
+        return FALSE;
+    }
+
+    guint count = g_strv_length(lines);
+    GString *contents = g_string_new(NULL);
+    gboolean entry_found = FALSE;
+
+    for (guint i = 0; i < HEADER_LINES && i < count; i++) {
+        g_string_append_printf(contents, "%s\n", lines[i]);
+    }
+    for (guint i = HEADER_LINES; i + RECORD_LINES <= count; i += RECORD_LINES) {
+        if (strcmp(lines[i], service_encrypted) == 0 &&
+            strcmp(lines[i + 1], email_encrypted) == 0 &&
+            strcmp(lines[i + 2], password_encrypted) == 0) {
+            entry_found = TRUE;
+            continue;
+        }
+        g_string_append_printf(contents, "%s\n%s\n%s\n", lines[i], lines[i + 1], lines[i + 2]);
+    }
+
+    gboolean ok = FALSE;
+    if (!entry_found) {
+        g_warning("Entry not found in file.");
+    } else if (write_vault(contents->str)) {
+        g_message("Entry deleted from file.");
+        ok = TRUE;
+    }
+
+    g_string_free(contents, TRUE);
+    g_strfreev(lines);
+    return ok;
 }

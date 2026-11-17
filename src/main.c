@@ -2,15 +2,12 @@
 // Created by Standa Křikava on 29.04.2025.
 //
 
+#include "crypto.h"
 #include "gui.h"
-#include "storage.h"
 #include <gtk/gtk.h>
 
 int main(int argc, char **argv) {
     gtk_init();
-
-    // Create password file if it doesn't exist
-    create_password_file_if_not_exists();
 
     EntryWidgets *entries = g_malloc0(sizeof(EntryWidgets));  // Allocate memory for EntryWidgets
 
@@ -21,6 +18,7 @@ int main(int argc, char **argv) {
     int status = g_application_run(G_APPLICATION(app), argc, argv);
 
     g_free(entries);
+    crypto_clear_key();
 
     g_object_unref(app);
 
